@@ -29,16 +29,18 @@ const pool = new Pool(dbConfig);
 const uploadDir = path.join(__dirname, 'uploads');
 fs.ensureDirSync(uploadDir);
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
+const storage = multer.memoryStorage();
+////#
+//const storage = multer.diskStorage({
+//  destination: (req, file, cb) => {
+//    cb(null, uploadDir);
+//  },
+//  filename: (req, file, cb) => {
     // Gerar nome único: timestamp_originalname
-    const uniqueName = Date.now() + '_' + file.originalname;
-    cb(null, uniqueName);
-  }
-});
+////    const uniqueName = Date.now() + '_' + file.originalname;
+//    cb(null, uniqueName);
+ // }
+//});
 
 const upload = multer({
   storage: storage,
