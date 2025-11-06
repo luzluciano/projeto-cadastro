@@ -640,7 +640,7 @@ app.post('/api/inscricoes-com-arquivos', upload.fields([
 
     if (req.files['documentoIdentidade']) {
       const file = req.files['documentoIdentidade'][0];
-      documentoIdentidadeData = fs.readFileSync(file.path);
+      documentoIdentidadeData = req.file.buffer;
       docIdNome = file.originalname;
       docIdTipo = file.mimetype;
       docIdTamanho = file.size;
@@ -650,7 +650,7 @@ app.post('/api/inscricoes-com-arquivos', upload.fields([
 
     if (req.files['certidaoBatismo']) {
       const file = req.files['certidaoBatismo'][0];
-      certidaoBatismoData = fs.readFileSync(file.path);
+      certidaoBatismoData = req.file.buffer;
       certBatNome = file.originalname;
       certBatTipo = file.mimetype;
       certBatTamanho = file.size;
