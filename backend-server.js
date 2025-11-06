@@ -640,22 +640,22 @@ app.post('/api/inscricoes-com-arquivos', upload.fields([
 
     if (req.files['documentoIdentidade']) {
       const file = req.files['documentoIdentidade'][0];
-      documentoIdentidadeData = req.file.buffer;
+      documentoIdentidadeData = file.buffer;
       docIdNome = file.originalname;
       docIdTipo = file.mimetype;
       docIdTamanho = file.size;
       // Remover arquivo temporário
-      fs.unlinkSync(file.path);
+      //fs.unlinkSync(file.path);
     }
 
     if (req.files['certidaoBatismo']) {
       const file = req.files['certidaoBatismo'][0];
-      certidaoBatismoData = req.file.buffer;
+      certidaoBatismoData = file.buffer;
       certBatNome = file.originalname;
       certBatTipo = file.mimetype;
       certBatTamanho = file.size;
       // Remover arquivo temporário
-      fs.unlinkSync(file.path);
+      //fs.unlinkSync(file.path);
     }
 
     // Query SQL atualizada com campos BLOB
