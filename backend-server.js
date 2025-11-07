@@ -7,17 +7,19 @@ const { Pool } = require('pg');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs-extra');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Configuração do banco PostgreSQL
 const dbConfig = {
-  connectionString: process.env.DATABASE_URL || 'postgresql://neondb_owner:npg_OdXFbUf5wN2x@ep-shy-hall-acxylv7b-pooler.sa-east-1.aws.neon.tech/neondb',
-  ssl: {
+  connectionString: process.env.DATABASE_URL || 'postgresql://admin:admin@localhost:5432/crisma_db',
+  ssl: process.env.NODE_ENV === 'production' ? {
     require: true,
     rejectUnauthorized: true
-  },
+  } : false,
   max: parseInt(process.env.DB_MAX_CONNECTIONS) || 20,
   idleTimeoutMillis: parseInt(process.env.DB_IDLE_TIMEOUT) || 30000,
   connectionTimeoutMillis: parseInt(process.env.DB_CONNECTION_TIMEOUT) || 2000,
@@ -129,6 +131,452 @@ function convertRowToInscricao(row) {
 
 // ===== ROTAS DA API =====
 
+// ===== AUTENTICAÇÃO E USUÁRIOS =====
+
+const JWT_SECRET = process.env.JWT_SECRET || 'sua_chave_secreta_muito_forte';
+
+// Função para buscar permissões do usuário
+const getUserPermissions = async (userId) => {
+  try {
+    console.log(`🔍 Buscando permissões para usuário ID: ${userId}`);
+    
+    const result = await pool.query(`
+      SELECT DISTINCT unnest(ga.permissoes) as permissao
+      FROM usuarios u
+      JOIN usuario_grupos ug ON u.id = ug.usuario_id
+      JOIN grupos_acesso ga ON ug.grupo_id = ga.id
+      WHERE u.id = $1 AND u.ativo = true AND ga.ativo = true
+      ORDER BY permissao
+    `, [userId]);
+
+    console.log(`📋 Permissões encontradas para usuário ${userId}:`, result.rows.map(row => row.permissao));
+    
+    return result.rows.map(row => row.permissao);
+  } catch (error) {
+    console.error('Erro ao buscar permissões do usuário:', error);
+    return [];
+  }
+};
+
+// Middleware de autenticação
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).json({ success: false, message: 'Token de acesso requerido' });
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) {
+      return res.status(403).json({ success: false, message: 'Token inválido' });
+    }
+    req.user = user;
+    next();
+  });
+};
+
+// Verificar se é o primeiro usuário (permite cadastro sem token)
+const isFirstUser = async () => {
+  try {
+    const result = await pool.query('SELECT COUNT(*) as count FROM usuarios');
+    const count = parseInt(result.rows[0].count);
+    
+    // Permite cadastro sem token se não há usuários ou há apenas o admin padrão
+    if (count === 0) return true;
+    if (count === 1) {
+      const adminCheck = await pool.query('SELECT COUNT(*) as count FROM usuarios WHERE usuario = $1', ['admin']);
+      return parseInt(adminCheck.rows[0].count) === 1;
+    }
+    return false;
+  } catch (error) {
+    console.error('Erro ao verificar primeiro usuário:', error);
+    return false;
+  }
+};
+
+// Login
+app.post('/api/login', async (req, res) => {
+  try {
+    const { usuario, senha } = req.body;
+
+    if (!usuario || !senha) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Usuário e senha são obrigatórios' 
+      });
+    }
+
+    // Buscar usuário
+    const result = await pool.query('SELECT * FROM usuarios WHERE usuario = $1 AND ativo = true', [usuario]);
+
+    if (result.rows.length === 0) {
+      return res.status(401).json({ 
+        success: false, 
+        message: 'Credenciais inválidas' 
+      });
+    }
+
+    const user = result.rows[0];
+
+    // Verificar senha
+    const senhaValida = await bcrypt.compare(senha, user.senha);
+
+    if (!senhaValida) {
+      return res.status(401).json({ 
+        success: false, 
+        message: 'Credenciais inválidas' 
+      });
+    }
+
+    // Gerar token JWT
+    const token = jwt.sign(
+      { 
+        id: user.id, 
+        usuario: user.usuario,
+        nome: user.nome 
+      }, 
+      JWT_SECRET, 
+      { expiresIn: '24h' }
+    );
+
+    // Buscar permissões do usuário
+    const permissions = await getUserPermissions(user.id);
+
+    res.json({
+      success: true,
+      message: 'Login realizado com sucesso',
+      data: {
+        token,
+        usuario: {
+          id: user.id,
+          usuario: user.usuario,
+          nome: user.nome,
+          permissions: permissions
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Erro no login:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Erro interno do servidor' 
+    });
+  }
+});
+
+// Verificar token
+app.get('/api/verify-token', authenticateToken, async (req, res) => {
+  try {
+    // Buscar dados atualizados do usuário
+    const result = await pool.query('SELECT * FROM usuarios WHERE id = $1 AND ativo = true', [req.user.id]);
+
+    if (result.rows.length === 0) {
+      return res.status(401).json({ 
+        success: false, 
+        message: 'Usuário não encontrado' 
+      });
+    }
+
+    const user = result.rows[0];
+
+    // Buscar permissões do usuário
+    const permissions = await getUserPermissions(user.id);
+
+    res.json({
+      success: true,
+      message: 'Token válido',
+      data: {
+        usuario: {
+          id: user.id,
+          usuario: user.usuario,
+          nome: user.nome,
+          permissions: permissions
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Erro na verificação do token:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Erro interno do servidor' 
+    });
+  }
+});
+
+// Criar usuário
+app.post('/api/usuarios', async (req, res) => {
+  try {
+    const { usuario, senha, nome, email } = req.body;
+
+    // Validações
+    if (!usuario || !senha || !nome) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Usuário, senha e nome são obrigatórios' 
+      });
+    }
+
+    // PERMITIR CADASTRO SEM TOKEN (CADASTRO PÚBLICO)
+    // Não verificar autenticação para permitir novos cadastros
+
+    // Verificar se usuário já existe
+    const existingUser = await pool.query('SELECT id FROM usuarios WHERE usuario = $1', [usuario]);
+
+    if (existingUser.rows.length > 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Usuário já existe' 
+      });
+    }
+
+    // Hash da senha
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(senha, saltRounds);
+
+    // Inserir usuário
+    const result = await pool.query(
+      'INSERT INTO usuarios (usuario, senha, nome, email) VALUES ($1, $2, $3, $4) RETURNING id, usuario, nome, email, created_at, ativo',
+      [usuario, hashedPassword, nome, email || null]
+    );
+
+    const newUser = result.rows[0];
+
+    // Atribuir grupo padrão "consulta" para novos usuários
+    await pool.query(`
+      INSERT INTO usuario_grupos (usuario_id, grupo_id) 
+      SELECT $1, g.id 
+      FROM grupos_acesso g 
+      WHERE g.nome = 'consulta'
+    `, [newUser.id]);
+
+    res.json({
+      success: true,
+      message: 'Usuário criado com sucesso',
+      data: {
+        id: newUser.id,
+        usuario: newUser.usuario,
+        nome: newUser.nome,
+        email: newUser.email,
+        created_at: newUser.created_at,
+        ativo: newUser.ativo
+      }
+    });
+
+  } catch (error) {
+    console.error('Erro ao criar usuário:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Erro interno do servidor' 
+    });
+  }
+});
+
+// Listar usuários
+app.get('/api/usuarios', authenticateToken, async (req, res) => {
+  try {
+    // Buscar todos os usuários com email
+    const result = await pool.query(
+      'SELECT id, usuario, nome, email, created_at, updated_at, ativo FROM usuarios ORDER BY id'
+    );
+
+    // Buscar permissões de cada usuário
+    const usuarios = await Promise.all(result.rows.map(async (user) => {
+      // Buscar permissões do usuário usando a função getUserPermissions
+      const permissions = await getUserPermissions(user.id);
+      
+      return {
+        id: user.id,
+        usuario: user.usuario,
+        nome: user.nome,
+        email: user.email || null,
+        created_at: user.created_at,
+        updated_at: user.updated_at,
+        ativo: user.ativo,
+        permissions
+      };
+    }));
+
+    res.json({
+      success: true,
+      data: usuarios
+    });
+
+  } catch (error) {
+    console.error('Erro ao listar usuários:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Erro interno do servidor' 
+    });
+  }
+});
+
+// Obter usuário por ID
+app.get('/api/usuarios/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await pool.query(
+      'SELECT id, usuario, nome, created_at, updated_at, ativo FROM usuarios WHERE id = $1',
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Usuário não encontrado' 
+      });
+    }
+
+    res.json({
+      success: true,
+      data: result.rows[0]
+    });
+
+  } catch (error) {
+    console.error('Erro ao obter usuário:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Erro interno do servidor' 
+    });
+  }
+});
+
+// Atualizar usuário
+app.put('/api/usuarios/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { usuario, senha, nome, ativo } = req.body;
+
+    // Buscar usuário atual
+    const currentUser = await pool.query('SELECT * FROM usuarios WHERE id = $1', [id]);
+
+    if (currentUser.rows.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Usuário não encontrado' 
+      });
+    }
+
+    // Preparar dados para atualização
+    const updates = [];
+    const values = [];
+    let paramIndex = 1;
+
+    if (usuario !== undefined) {
+      // Verificar se novo nome de usuário já existe (em outro usuário)
+      const existingUser = await pool.query('SELECT id FROM usuarios WHERE usuario = $1 AND id != $2', [usuario, id]);
+      if (existingUser.rows.length > 0) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Nome de usuário já está em uso' 
+        });
+      }
+      updates.push(`usuario = $${paramIndex}`);
+      values.push(usuario);
+      paramIndex++;
+    }
+
+    if (senha !== undefined && senha !== null && senha.trim() !== '') {
+      const hashedPassword = await bcrypt.hash(senha, 10);
+      updates.push(`senha = $${paramIndex}`);
+      values.push(hashedPassword);
+      paramIndex++;
+    }
+
+    if (nome !== undefined) {
+      updates.push(`nome = $${paramIndex}`);
+      values.push(nome);
+      paramIndex++;
+    }
+
+    if (ativo !== undefined) {
+      updates.push(`ativo = $${paramIndex}`);
+      values.push(ativo);
+      paramIndex++;
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Nenhum campo para atualizar' 
+      });
+    }
+
+    // Adicionar updated_at
+    updates.push(`updated_at = CURRENT_TIMESTAMP`);
+    values.push(id);
+
+    const query = `
+      UPDATE usuarios 
+      SET ${updates.join(', ')}
+      WHERE id = $${paramIndex}
+      RETURNING id, usuario, nome, created_at, updated_at, ativo
+    `;
+
+    const result = await pool.query(query, values);
+
+    res.json({
+      success: true,
+      message: 'Usuário atualizado com sucesso',
+      data: result.rows[0]
+    });
+
+  } catch (error) {
+    console.error('Erro ao atualizar usuário:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Erro interno do servidor' 
+    });
+  }
+});
+
+// Deletar usuário
+app.delete('/api/usuarios/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Verificar se não está tentando deletar a si mesmo
+    if (parseInt(id) === req.user.id) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Não é possível deletar o próprio usuário' 
+      });
+    }
+
+    // Buscar usuário antes de deletar
+    const userToDelete = await pool.query(
+      'SELECT id, usuario, nome FROM usuarios WHERE id = $1',
+      [id]
+    );
+
+    if (userToDelete.rows.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Usuário não encontrado' 
+      });
+    }
+
+    // Deletar usuário
+    await pool.query('DELETE FROM usuarios WHERE id = $1', [id]);
+
+    res.json({
+      success: true,
+      message: 'Usuário deletado com sucesso',
+      data: userToDelete.rows[0]
+    });
+
+  } catch (error) {
+    console.error('Erro ao deletar usuário:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Erro interno do servidor' 
+    });
+  }
+});
+
 // Teste de conexão
 app.get('/api/test', async (req, res) => {
   try {
@@ -145,6 +593,32 @@ app.get('/api/test', async (req, res) => {
   } catch (error) {
     console.error('❌ Erro no teste de conexão:', error);
     res.status(500).json({ success: false, message: 'Erro de conexão' });
+  }
+});
+
+// Rota temporária para verificar dados das tabelas
+app.get('/api/debug/tables', async (req, res) => {
+  try {
+    const usuarios = await pool.query('SELECT id, usuario, nome FROM usuarios');
+    const grupos = await pool.query('SELECT id, nome, permissoes FROM grupos_acesso');
+    const userGroups = await pool.query(`
+      SELECT ug.usuario_id, ug.grupo_id, u.usuario, ga.nome as grupo_nome 
+      FROM usuario_grupos ug 
+      JOIN usuarios u ON ug.usuario_id = u.id 
+      JOIN grupos_acesso ga ON ug.grupo_id = ga.id
+    `);
+    
+    res.json({
+      success: true,
+      data: {
+        usuarios: usuarios.rows,
+        grupos: grupos.rows,
+        usuario_grupos: userGroups.rows
+      }
+    });
+  } catch (error) {
+    console.error('Erro ao verificar tabelas:', error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
@@ -958,6 +1432,127 @@ app.get('/api/arquivo/certidao-batismo/:id', async (req, res) => {
 async function atualizarEstruturaBanco() {
   try {
     console.log('🔄 Verificando/atualizando estrutura do banco...');
+
+    // Criar tabela de usuários se não existir
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS usuarios (
+        id SERIAL PRIMARY KEY,
+        usuario VARCHAR(50) UNIQUE NOT NULL,
+        senha VARCHAR(255) NOT NULL,
+        nome VARCHAR(255) NOT NULL,
+        email VARCHAR(255),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        ativo BOOLEAN DEFAULT true
+      )
+    `);
+
+    // Criar índices para a tabela usuarios
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_usuarios_usuario ON usuarios(usuario);
+      CREATE INDEX IF NOT EXISTS idx_usuarios_ativo ON usuarios(ativo);
+    `);
+
+    // Adicionar coluna email se não existir
+    await pool.query(`
+      DO $$ 
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns 
+          WHERE table_name = 'usuarios' 
+          AND column_name = 'email'
+        ) THEN
+          ALTER TABLE usuarios ADD COLUMN email VARCHAR(255);
+        END IF;
+      END $$;
+    `);
+
+    // Criar tabela de grupos/perfis
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS grupos_acesso (
+        id SERIAL PRIMARY KEY,
+        nome VARCHAR(50) UNIQUE NOT NULL,
+        descricao TEXT,
+        permissoes TEXT[],
+        ativo BOOLEAN DEFAULT true,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Criar tabela de relacionamento usuário-grupo
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS usuario_grupos (
+        id SERIAL PRIMARY KEY,
+        usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+        grupo_id INTEGER NOT NULL REFERENCES grupos_acesso(id) ON DELETE CASCADE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(usuario_id, grupo_id)
+      )
+    `);
+
+    // Criar índices para as tabelas de grupos
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_usuario_grupos_usuario ON usuario_grupos(usuario_id);
+      CREATE INDEX IF NOT EXISTS idx_usuario_grupos_grupo ON usuario_grupos(grupo_id);
+      CREATE INDEX IF NOT EXISTS idx_grupos_acesso_nome ON grupos_acesso(nome);
+      CREATE INDEX IF NOT EXISTS idx_grupos_acesso_ativo ON grupos_acesso(ativo);
+    `);
+
+    // Inserir grupos padrão (forçar criação sempre)
+    await pool.query(`
+      INSERT INTO grupos_acesso (nome, descricao, permissoes) VALUES 
+      ('admin', 'Administrador do Sistema', 
+       ARRAY['usuarios.criar', 'usuarios.listar', 'usuarios.editar', 'usuarios.deletar', 
+             'inscricoes.criar', 'inscricoes.listar', 'inscricoes.editar', 'inscricoes.deletar',
+             'grupos.criar', 'grupos.listar', 'grupos.editar', 'grupos.deletar',
+             'sistema.configurar']),
+      ('operador', 'Operador do Sistema', 
+       ARRAY['inscricoes.criar', 'inscricoes.listar', 'inscricoes.editar', 
+             'usuarios.listar']),
+      ('consulta', 'Apenas Consulta', 
+       ARRAY['inscricoes.listar', 'usuarios.listar'])
+      ON CONFLICT (nome) DO UPDATE SET
+      permissoes = EXCLUDED.permissoes,
+      descricao = EXCLUDED.descricao,
+      updated_at = CURRENT_TIMESTAMP
+    `);
+    console.log('✅ Grupos de acesso verificados/criados');
+
+    // Inserir usuário admin padrão se não existir nenhum usuário
+    const userCount = await pool.query('SELECT COUNT(*) as count FROM usuarios');
+    if (parseInt(userCount.rows[0].count) === 0) {
+      // Hash da senha 'admin123'
+      const hashedPassword = await bcrypt.hash('admin123', 10);
+      const adminUser = await pool.query(
+        'INSERT INTO usuarios (usuario, senha, nome) VALUES ($1, $2, $3) RETURNING id',
+        ['admin', hashedPassword, 'Administrador']
+      );
+      
+      // Associar usuário admin ao grupo admin
+      await pool.query(`
+        INSERT INTO usuario_grupos (usuario_id, grupo_id) 
+        SELECT $1, g.id 
+        FROM grupos_acesso g 
+        WHERE g.nome = 'admin'
+      `, [adminUser.rows[0].id]);
+      
+      console.log('✅ Usuário admin padrão criado e associado ao grupo admin');
+    }
+
+    // Garantir que usuário admin existente tenha grupo admin (forçar sempre)
+    const adminUser = await pool.query('SELECT id FROM usuarios WHERE usuario = $1', ['admin']);
+    if (adminUser.rows.length > 0) {
+      const adminId = adminUser.rows[0].id;
+      await pool.query(`
+        INSERT INTO usuario_grupos (usuario_id, grupo_id) 
+        SELECT $1, g.id 
+        FROM grupos_acesso g 
+        WHERE g.nome = 'admin'
+        ON CONFLICT (usuario_id, grupo_id) DO NOTHING
+      `, [adminId]);
+      console.log('✅ Usuário admin verificado/associado ao grupo admin');
+    }
 
     // Verificar e adicionar coluna tipo_inscricao
     await pool.query(`
