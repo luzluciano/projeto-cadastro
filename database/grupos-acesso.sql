@@ -23,7 +23,7 @@ CREATE TABLE usuario_grupos (
 -- Inserir grupos padrão
 INSERT INTO grupos_acesso (nome, descricao, permissoes) VALUES 
 ('admin', 'Administrador do Sistema', 
- ARRAY['usuarios.criar', 'usuarios.listar', 'usuarios.editar', 'usuarios.deletar', 
+ ARRAY['admin','usuarios.criar', 'usuarios.listar', 'usuarios.editar', 'usuarios.deletar', 
        'inscricoes.criar', 'inscricoes.listar', 'inscricoes.editar', 'inscricoes.deletar',
        'grupos.criar', 'grupos.listar', 'grupos.editar', 'grupos.deletar',
        'sistema.configurar']),
