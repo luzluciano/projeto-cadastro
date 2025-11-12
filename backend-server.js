@@ -11,6 +11,7 @@ const { uploadDir } = require('./src/config/upload');
 const authRoutes = require('./src/routes/auth');
 const usuariosRoutes = require('./src/routes/usuarios');
 const inscricoesRoutes = require('./src/routes/inscricoes');
+const spotsRoutes = require('./src/routes/spots');
 const utilsRoutes = require('./src/routes/utils');
 
 const app = express();
@@ -28,6 +29,7 @@ app.use('/uploads', express.static(uploadDir));
 app.use('/api', authRoutes);
 app.use('/api/usuarios', usuariosRoutes);
 app.use('/api/inscricoes', inscricoesRoutes);
+app.use('/api/spots', spotsRoutes);
 app.use('/api', utilsRoutes);
 
 // Iniciar servidor
