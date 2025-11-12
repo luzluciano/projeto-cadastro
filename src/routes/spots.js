@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const spotsController = require('../controllers/spotsController');
-const { verificarToken, verificarPermissao } = require('../middleware/auth');
+const { authenticateToken } = require('../middleware/auth');
 
 // === ROTAS PÚBLICAS ===
 
@@ -15,50 +15,43 @@ router.get('/ativos', spotsController.listarSpotsAtivos);
 
 // GET /api/spots/admin - Listar todos os spots (admin)
 router.get('/admin', 
-  verificarToken, 
-  verificarPermissao(['spots.listar', 'sistema.configurar']), 
+  authenticateToken, 
   spotsController.listarSpotsAdmin
 );
 
 // GET /api/spots/admin/:id - Buscar spot por ID (admin)
 router.get('/admin/:id', 
-  verificarToken, 
-  verificarPermissao(['spots.listar', 'sistema.configurar']), 
+  authenticateToken, 
   spotsController.buscarSpotPorId
 );
 
 // POST /api/spots/admin - Criar novo spot
 router.post('/admin', 
-  verificarToken, 
-  verificarPermissao(['spots.criar', 'sistema.configurar']), 
+  authenticateToken, 
   spotsController.criarSpot
 );
 
 // PUT /api/spots/admin/:id - Atualizar spot
 router.put('/admin/:id', 
-  verificarToken, 
-  verificarPermissao(['spots.editar', 'sistema.configurar']), 
+  authenticateToken, 
   spotsController.atualizarSpot
 );
 
 // DELETE /api/spots/admin/:id - Excluir spot
 router.delete('/admin/:id', 
-  verificarToken, 
-  verificarPermissao(['spots.deletar', 'sistema.configurar']), 
+  authenticateToken, 
   spotsController.excluirSpot
 );
 
 // PATCH /api/spots/admin/:id/status - Alternar status ativo/inativo
 router.patch('/admin/:id/status', 
-  verificarToken, 
-  verificarPermissao(['spots.editar', 'sistema.configurar']), 
+  authenticateToken, 
   spotsController.alternarStatusSpot
 );
 
 // POST /api/spots/admin/reordenar - Reordenar spots
 router.post('/admin/reordenar', 
-  verificarToken, 
-  verificarPermissao(['spots.editar', 'sistema.configurar']), 
+  authenticateToken, 
   spotsController.reordenarSpots
 );
 
