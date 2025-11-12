@@ -1,3 +1,20 @@
+-- SEQUENCE: public.spots_id_seq
+
+-- DROP SEQUENCE IF EXISTS public.spots_id_seq;
+
+CREATE SEQUENCE IF NOT EXISTS public.spots_id_seq
+    INCREMENT 1
+    START 1
+    MINVALUE 1
+    MAXVALUE 2147483647
+    CACHE 1;
+
+ALTER SEQUENCE public.spots_id_seq
+    OWNED BY public.spots.id;
+
+ALTER SEQUENCE public.spots_id_seq
+    OWNER TO admin;
+
 -- Table: public.spots
 
 -- DROP TABLE IF EXISTS public.spots;
