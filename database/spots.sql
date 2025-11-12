@@ -9,11 +9,7 @@ CREATE SEQUENCE IF NOT EXISTS public.spots_id_seq
     MAXVALUE 2147483647
     CACHE 1;
 
-ALTER SEQUENCE public.spots_id_seq
-    OWNED BY public.spots.id;
 
-ALTER SEQUENCE public.spots_id_seq
-    OWNER TO admin;
 
 -- Table: public.spots
 
@@ -85,9 +81,37 @@ CREATE INDEX IF NOT EXISTS idx_spots_vigencia
 -- Trigger: update_spots_data_atualizacao
 
 -- DROP TRIGGER IF EXISTS update_spots_data_atualizacao ON public.spots;
+-- FUNCTION: public.update_spots_data_atualizacao()
+
+-- DROP FUNCTION IF EXISTS public.update_spots_data_atualizacao();
+
+CREATE OR REPLACE FUNCTION public.update_spots_data_atualizacao()
+    RETURNS trigger
+    LANGUAGE 'plpgsql'
+    COST 100
+    VOLATILE NOT LEAKPROOF
+AS $BODY$
+      BEGIN
+          NEW.data_atualizacao = CURRENT_TIMESTAMP;
+          RETURN NEW;
+      END;
+      
+$BODY$;
+
+ALTER FUNCTION public.update_spots_data_atualizacao()
+    OWNER TO admin;
+
 
 CREATE OR REPLACE TRIGGER update_spots_data_atualizacao
     BEFORE UPDATE 
     ON public.spots
     FOR EACH ROW
     EXECUTE FUNCTION public.update_spots_data_atualizacao();
+
+
+
+    ALTER SEQUENCE public.spots_id_seq
+    OWNED BY public.spots.id;
+
+ALTER SEQUENCE public.spots_id_seq
+    OWNER TO admin;
